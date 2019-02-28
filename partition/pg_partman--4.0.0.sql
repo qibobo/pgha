@@ -5442,7 +5442,9 @@ LOOP
                 END IF;
             END LOOP;
         END IF; -- end infinite time check
-
+        IF v_current_partition_timestamp IS NULL THEN
+            SELECT CURRENT_TIMESTAMP INTO v_current_partition_timestamp;
+        END IF;
         -- Check for values in the parent/default table. If they are there and greater than all child values, use that instead
         -- This allows maintenance to continue working properly if there is a large gap in data insertion. Data will remain in parent, but new tables will be created
         EXECUTE format('SELECT max(%s) FROM ONLY %I.%I', v_partition_expression, v_parent_schema, v_default_tablename) INTO v_max_time_parent;
