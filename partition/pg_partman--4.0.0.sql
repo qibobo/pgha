@@ -30,7 +30,7 @@ CREATE TABLE @extschema@.part_config (
     , CONSTRAINT publications_no_empty_set_chk CHECK (publications <> '{}')
 );
 CREATE INDEX part_config_type_idx ON @extschema@.part_config (partition_type);
-SELECT pg_catalog.pg_extension_config_dump('part_config', '');
+-- SELECT pg_catalog.pg_extension_config_dump('part_config', '');
 
 
 -- FK set deferrable because create_parent() & create_sub_parent() inserts to this table before part_config
@@ -60,7 +60,7 @@ CREATE TABLE @extschema@.part_config_sub (
     , CONSTRAINT part_config_sub_sub_parent_fkey FOREIGN KEY (sub_parent) REFERENCES @extschema@.part_config (parent_table) ON DELETE CASCADE ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED
     , CONSTRAINT positive_premake_check CHECK (sub_premake > 0)
 );
-SELECT pg_catalog.pg_extension_config_dump('part_config_sub', '');
+-- SELECT pg_catalog.pg_extension_config_dump('part_config_sub', '');
 
 -- Ensure the control column cannot be one of the additional constraint columns. 
 ALTER TABLE @extschema@.part_config ADD CONSTRAINT control_constraint_col_chk CHECK ((constraint_cols @> ARRAY[control]) <> true);
@@ -75,7 +75,7 @@ CREATE TABLE @extschema@.custom_time_partitions (
     , partition_range tstzrange NOT NULL
     , PRIMARY KEY (parent_table, child_table));
 CREATE INDEX custom_time_partitions_partition_range_idx ON @extschema@.custom_time_partitions USING gist (partition_range);
-SELECT pg_catalog.pg_extension_config_dump('custom_time_partitions', '');
+-- SELECT pg_catalog.pg_extension_config_dump('custom_time_partitions', '');
 
 /*
  * Custom view to help improve privilege lookups for pg_partman. 
@@ -142,7 +142,7 @@ CREATE FUNCTION @extschema@.check_epoch_type (p_type text) RETURNS boolean
 DECLARE
 v_result    boolean;
 BEGIN
-    SELECT p_type IN ('none', 'seconds', 'milliseconds') INTO v_result;
+    SELECT p_type IN ('none', 'seconds', 'milliseconds', 'nanoseconds') INTO v_result;
     RETURN v_result;
 END
 $$;
@@ -1629,6 +1629,7 @@ ELSE
     v_partition_expression := CASE
         WHEN v_epoch = 'seconds' THEN format('to_timestamp(%I)', v_control)
         WHEN v_epoch = 'milliseconds' THEN format('to_timestamp((%I/1000)::float)', v_control)
+        WHEN v_epoch = 'nanoseconds' THEN format('to_timestamp((%I/1000000000)::float)', v_control)
         ELSE format('%I', v_control)
     END;
 
@@ -1654,6 +1655,7 @@ END IF; -- end infinite time check
 v_partition_expression := CASE
     WHEN v_epoch = 'seconds' THEN format('to_timestamp(NEW.%I)', v_control)
     WHEN v_epoch = 'milliseconds' THEN format('to_timestamp((NEW.%I/1000)::float)', v_control)
+    WHEN v_epoch = 'nanoseconds' THEN format('to_timestamp((NEW.%I/1000000000)::float)', v_control)
     ELSE format('NEW.%I', v_control)
 END;
 
@@ -3094,6 +3096,7 @@ END IF;
 v_partition_expression := CASE
     WHEN v_epoch = 'seconds' THEN format('to_timestamp(%I)', v_control)
     WHEN v_epoch = 'milliseconds' THEN format('to_timestamp((%I/1000)::float)', v_control)
+    WHEN v_epoch = 'nanoseconds' THEN format('to_timestamp((%I/1000000000)::float)', v_control)
     ELSE format('%I', v_control)
 END;
 IF p_debug THEN
@@ -3223,6 +3226,14 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
                     , v_partition_name
                     , EXTRACT('epoch' FROM v_partition_timestamp_start) * 1000
                     , EXTRACT('epoch' FROM v_partition_timestamp_end) * 1000);
+            ELSIF v_epoch = 'nanoseconds' THEN
+                EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)'
+                    , v_parent_schema
+                    , v_parent_tablename
+                    , v_parent_schema
+                    , v_partition_name
+                    , EXTRACT('epoch' FROM v_partition_timestamp_start)::bigint * 1000000000
+                    , EXTRACT('epoch' FROM v_partition_timestamp_end)::bigint * 1000000000);
             END IF;
             -- Create secondary, time-based constraint since native's constraint is already integer based
             EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s >= %L AND %4$s < %6$L)'
@@ -3261,6 +3272,15 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
                             , EXTRACT('epoch' from v_partition_timestamp_start) * 1000
                             , v_control
                             , EXTRACT('epoch' from v_partition_timestamp_end) * 1000);
+        ELSIF v_epoch = 'nanoseconds' THEN
+            EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%I >= %L AND %I < %L)'
+                            , v_parent_schema
+                            , v_partition_name
+                            , v_partition_name||'_partition_int_check'
+                            , v_control
+                            , EXTRACT('epoch' from v_partition_timestamp_start)::bigint * 1000000000
+                            , v_control
+                            , EXTRACT('epoch' from v_partition_timestamp_end)::bigint * 1000000000);
         END IF;
 
         EXECUTE format('ALTER TABLE %I.%I INHERIT %I.%I'
@@ -4964,6 +4984,7 @@ SELECT partition_tablename INTO v_last_partition FROM @extschema@.show_partition
 v_partition_expression := CASE
     WHEN v_epoch = 'seconds' THEN format('to_timestamp(%I)', v_control)
     WHEN v_epoch = 'milliseconds' THEN format('to_timestamp((%I/1000)::float)', v_control)
+    WHEN v_epoch = 'nanoseconds' THEN format('to_timestamp((%I/1000000000)::float)', v_control)
     ELSE format('%I', v_control)
 END;
 
@@ -5372,6 +5393,7 @@ LOOP
     v_partition_expression := CASE
         WHEN v_row.epoch = 'seconds' THEN format('to_timestamp(%I)', v_row.control)
         WHEN v_row.epoch = 'milliseconds' THEN format('to_timestamp((%I/1000)::float)', v_row.control)
+        WHEN v_row.epoch = 'nanoseconds' THEN format('to_timestamp((%I/1000000000)::float)', v_row.control)
         ELSE format('%I', v_row.control)
     END;
     IF p_debug THEN
@@ -6219,6 +6241,7 @@ END IF;
 v_partition_expression := CASE
     WHEN v_epoch = 'seconds' THEN format('to_timestamp(%I)', v_control)
     WHEN v_epoch = 'milliseconds' THEN format('to_timestamp((%I/1000)::float)', v_control)
+    WHEN v_epoch = 'nanoseconds' THEN format('to_timestamp((%I/1000000000)::float)', v_control)
     ELSE format('%I', v_control)
 END;
 
